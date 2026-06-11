@@ -1,0 +1,1024 @@
+interface Certificate {
+  id: string;
+  name: string;
+  subject: string;
+  issuer: string;
+  serialNumber: string;
+  notBefore: Date;
+  notAfter: Date;
+  fingerprint: { sha1: string; sha256: string };
+  keyUsage: string[];
+  extendedKeyUsage: string[];
+  publicKeyAlgorithm: string;
+  signatureAlgorithm: string;
+  filePath: string;
+  fileFormat: string;
+  projectId: string;
+  notes: string;
+  responsiblePerson: string;
+  importDate: Date;
+  sourceType: 'local' | 'shared';
+}
+
+interface Project {
+  id: string;
+  name: string;
+  description: string;
+  createdDate: Date;
+  color: string;
+}
+
+interface RenewalTask {
+  id: string;
+  certificateId: string;
+  taskName: string;
+  assignee: string;
+  dueDate: Date;
+  status: 'pending' | 'in_progress' | 'completed';
+  notes: string;
+  createdDate: Date;
+  completedDate?: Date;
+}
+
+interface PasswordEntry {
+  id: string;
+  name: string;
+  password: string;
+  relatedCertificateId?: string;
+  notes: string;
+  createdDate: Date;
+  modifiedDate: Date;
+}
+
+interface CheckResult {
+  type: string;
+  severity: 'error' | 'warning' | 'info';
+  certificateId: string;
+  certificateName: string;
+  message: string;
+  details: string;
+  suggestion: string;
+}
+
+class CertManagerApp {
+  private certificates: Certificate[] = [];
+  private projects: Project[] = [];
+  private tasks: RenewalTask[] = [];
+  private passwords: PasswordEntry[] = [];
+  private currentPage: string = 'certificates';
+  private selectedCertificate: Certificate | null = null;
+  private editingTask: RenewalTask | null = null;
+  private editingPassword: PasswordEntry | null = null;
+  private searchTerm: string = '';
+  private filterStatus: string = '';
+  private filterProject: string = '';
+
+  constructor() {
+    this.init();
+  }
+
+  private async init() {
+    await this.loadData();
+    this.setupEventListeners();
+    this.renderCurrentPage();
+    this.updateStatusBar();
+  }
+
+  private async loadData() {
+    try {
+      this.certificates = await window.electronAPI.certificates.getAll();
+      this.projects = await window.electronAPI.projects.getAll();
+      this.tasks = await window.electronAPI.tasks.getAll();
+      this.passwords = await window.electronAPI.passwords.getAll();
+    } catch (error) {
+      console.error('Failed to load data:', error);
+      this.showToast('加载数据失败', 'error');
+    }
+  }
+
+  private setupEventListeners() {
+    document.getElementById('btnMinimize')?.addEventListener('click', () => {
+      window.electronAPI.window.minimize();
+    });
+
+    document.getElementById('btnMaximize')?.addEventListener('click', () => {
+      window.electronAPI.window.maximize();
+    });
+
+    document.getElementById('btnClose')?.addEventListener('click', () => {
+      window.electronAPI.window.close();
+    });
+
+    document.querySelectorAll('.nav-item').forEach(item => {
+      item.addEventListener('click', (e) => {
+        const target = e.currentTarget as HTMLElement;
+        const page = target.dataset.page;
+        if (page) {
+          this.navigateTo(page);
+        }
+      });
+    });
+
+    document.getElementById('btnImport')?.addEventListener('click', () => {
+      this.showImportModal();
+    });
+
+    document.getElementById('btnScanDir')?.addEventListener('click', () => {
+      this.scanDirectory();
+    });
+
+    document.getElementById('btnSelectFiles')?.addEventListener('click', () => {
+      this.selectFiles();
+    });
+
+    document.getElementById('btnCloseImport')?.addEventListener('click', () => {
+      this.hideModal('modalImport');
+    });
+
+    document.getElementById('btnCloseDetail')?.addEventListener('click', () => {
+      this.hideModal('modalDetail');
+    });
+
+    document.getElementById('btnSaveDetail')?.addEventListener('click', () => {
+      this.saveCertificateDetail();
+    });
+
+    document.getElementById('btnOpenLocation')?.addEventListener('click', () => {
+      if (this.selectedCertificate) {
+        window.electronAPI.shell.openPath(this.selectedCertificate.filePath);
+      }
+    });
+
+    document.getElementById('btnCopyFingerprint')?.addEventListener('click', () => {
+      if (this.selectedCertificate) {
+        navigator.clipboard.writeText(this.selectedCertificate.fingerprint.sha256);
+        this.showToast('指纹已复制到剪贴板', 'success');
+      }
+    });
+
+    document.getElementById('btnDeleteCert')?.addEventListener('click', () => {
+      if (this.selectedCertificate) {
+        this.deleteCertificate(this.selectedCertificate.id);
+      }
+    });
+
+    document.getElementById('searchInput')?.addEventListener('input', (e) => {
+      this.searchTerm = (e.target as HTMLInputElement).value;
+      this.renderCertificates();
+    });
+
+    document.getElementById('filterStatus')?.addEventListener('change', (e) => {
+      this.filterStatus = (e.target as HTMLSelectElement).value;
+      this.renderCertificates();
+    });
+
+    document.getElementById('filterProject')?.addEventListener('change', (e) => {
+      this.filterProject = (e.target as HTMLSelectElement).value;
+      this.renderCertificates();
+    });
+
+    document.getElementById('btnNewTask')?.addEventListener('click', () => {
+      this.showTaskModal();
+    });
+
+    document.getElementById('btnCloseTask')?.addEventListener('click', () => {
+      this.hideModal('modalTask');
+    });
+
+    document.getElementById('btnCancelTask')?.addEventListener('click', () => {
+      this.hideModal('modalTask');
+    });
+
+    document.getElementById('btnSaveTask')?.addEventListener('click', () => {
+      this.saveTask();
+    });
+
+    document.getElementById('btnRunChecks')?.addEventListener('click', () => {
+      this.runChecks();
+    });
+
+    document.getElementById('btnExportReport')?.addEventListener('click', () => {
+      this.exportReport();
+    });
+
+    document.getElementById('btnAddPassword')?.addEventListener('click', () => {
+      this.showPasswordModal();
+    });
+
+    document.getElementById('btnClosePassword')?.addEventListener('click', () => {
+      this.hideModal('modalPassword');
+    });
+
+    document.getElementById('btnCancelPassword')?.addEventListener('click', () => {
+      this.hideModal('modalPassword');
+    });
+
+    document.getElementById('btnSavePassword')?.addEventListener('click', () => {
+      this.savePassword();
+    });
+
+    this.setupDropzone();
+    this.setupModalBackdrops();
+  }
+
+  private setupDropzone() {
+    const dropzone = document.getElementById('dropzone');
+    if (!dropzone) return;
+
+    dropzone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropzone.classList.add('dragover');
+    });
+
+    dropzone.addEventListener('dragleave', () => {
+      dropzone.classList.remove('dragover');
+    });
+
+    dropzone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropzone.classList.remove('dragover');
+      const files = e.dataTransfer?.files;
+      if (files && files.length > 0) {
+        this.handleFiles(Array.from(files).map(f => f.path));
+      }
+    });
+  }
+
+  private setupModalBackdrops() {
+    document.querySelectorAll('.modal-backdrop').forEach(backdrop => {
+      backdrop.addEventListener('click', () => {
+        const modal = backdrop.closest('.modal');
+        if (modal) {
+          modal.classList.remove('active');
+        }
+      });
+    });
+  }
+
+  private navigateTo(page: string) {
+    this.currentPage = page;
+
+    document.querySelectorAll('.nav-item').forEach(item => {
+      item.classList.remove('active');
+      if ((item as HTMLElement).dataset.page === page) {
+        item.classList.add('active');
+      }
+    });
+
+    document.querySelectorAll('.page').forEach(p => {
+      p.classList.remove('active');
+    });
+
+    const pageElement = document.getElementById(`page${page.charAt(0).toUpperCase() + page.slice(1)}`);
+    if (pageElement) {
+      pageElement.classList.add('active');
+    }
+
+    this.renderCurrentPage();
+  }
+
+  private renderCurrentPage() {
+    switch (this.currentPage) {
+      case 'certificates':
+        this.renderCertificates();
+        this.updateProjectFilters();
+        break;
+      case 'reminders':
+        this.renderReminders();
+        break;
+      case 'tools':
+        this.renderCheckResults();
+        break;
+      case 'passwords':
+        this.renderPasswords();
+        break;
+    }
+  }
+
+  private renderCertificates() {
+    const grid = document.getElementById('certificatesGrid');
+    if (!grid) return;
+
+    let filtered = this.certificates;
+
+    if (this.searchTerm) {
+      const term = this.searchTerm.toLowerCase();
+      filtered = filtered.filter(cert =>
+        cert.name.toLowerCase().includes(term) ||
+        cert.subject.toLowerCase().includes(term) ||
+        cert.issuer.toLowerCase().includes(term)
+      );
+    }
+
+    if (this.filterStatus) {
+      const now = new Date();
+      filtered = filtered.filter(cert => {
+        if (this.filterStatus === 'expired') {
+          return cert.notAfter <= now;
+        } else if (this.filterStatus === 'expiring') {
+          const daysLeft = Math.ceil((cert.notAfter.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+          return cert.notAfter > now && daysLeft <= 60;
+        } else if (this.filterStatus === 'valid') {
+          const daysLeft = Math.ceil((cert.notAfter.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+          return cert.notAfter > now && daysLeft > 60;
+        }
+        return true;
+      });
+    }
+
+    if (this.filterProject) {
+      filtered = filtered.filter(cert => cert.projectId === this.filterProject);
+    }
+
+    if (filtered.length === 0) {
+      grid.innerHTML = `
+        <div class="empty-state">
+          <p>暂无证书</p>
+          <p>点击上方"导入证书"按钮开始</p>
+        </div>
+      `;
+      return;
+    }
+
+    grid.innerHTML = filtered.map(cert => {
+      const status = this.getCertificateStatus(cert);
+      const match = status.match(/\d+/);
+      const days = match ? parseInt(match[0], 10) : 0;
+      const statusClass = status === '已过期' ? 'expired' : status.includes('剩余') && days <= 7 ? 'expired' : days <= 30 ? 'warning' : 'valid';
+
+      return `
+        <div class="cert-card" data-id="${cert.id}">
+          <div class="cert-card-header">
+            <div>
+              <div class="cert-name">${this.escapeHtml(cert.name)}</div>
+              <div class="cert-info">
+                <span>颁发者: ${this.escapeHtml(cert.issuer.split(',')[0] || cert.issuer)}</span>
+              </div>
+            </div>
+            <span class="cert-status ${statusClass}">${status}</span>
+          </div>
+          <div class="cert-info">
+            <span>持有人: ${this.escapeHtml(cert.subject.split(',')[0] || cert.subject)}</span>
+            <span>格式: ${cert.fileFormat} | 用途: ${cert.keyUsage[0] || cert.extendedKeyUsage[0] || 'N/A'}</span>
+          </div>
+          <div class="cert-dates">
+            <span>有效期: ${new Date(cert.notBefore).toLocaleDateString()}</span>
+            <span>至 ${new Date(cert.notAfter).toLocaleDateString()}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    grid.querySelectorAll('.cert-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const id = (card as HTMLElement).dataset.id;
+        if (id) {
+          this.showCertificateDetail(id);
+        }
+      });
+    });
+  }
+
+  private getCertificateStatus(cert: Certificate): string {
+    const now = new Date();
+    if (cert.notAfter <= now) {
+      return '已过期';
+    }
+    const daysLeft = Math.ceil((cert.notAfter.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+    if (daysLeft <= 7) {
+      return `剩余${daysLeft}天`;
+    } else if (daysLeft <= 30) {
+      return `剩余${daysLeft}天`;
+    }
+    return `剩余${daysLeft}天`;
+  }
+
+  private async showCertificateDetail(id: string) {
+    const cert = this.certificates.find(c => c.id === id);
+    if (!cert) return;
+
+    this.selectedCertificate = cert;
+
+    const daysLeft = Math.ceil((cert.notAfter.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+
+    const body = document.getElementById('detailBody');
+    if (body) {
+      body.innerHTML = `
+        <div class="detail-section">
+          <h4>基本信息</h4>
+          <div class="detail-grid">
+            <div class="detail-item">
+              <span class="detail-label">证书名称</span>
+              <span class="detail-value">${this.escapeHtml(cert.name)}</span>
+            </div>
+            <div class="detail-item">
+              <span class="detail-label">序列号</span>
+              <span class="detail-value">${this.escapeHtml(cert.serialNumber)}</span>
+            </div>
+            <div class="detail-item">
+              <span class="detail-label">颁发者</span>
+              <span class="detail-value">${this.escapeHtml(cert.issuer)}</span>
+            </div>
+            <div class="detail-item">
+              <span class="detail-label">持有人</span>
+              <span class="detail-value">${this.escapeHtml(cert.subject)}</span>
+            </div>
+            <div class="detail-item">
+              <span class="detail-label">有效期</span>
+              <span class="detail-value">${new Date(cert.notBefore).toLocaleDateString()} - ${new Date(cert.notAfter).toLocaleDateString()}</span>
+            </div>
+            <div class="detail-item">
+              <span class="detail-label">剩余天数</span>
+              <span class="detail-value" style="color: ${daysLeft <= 7 ? '#ff4d4f' : daysLeft <= 30 ? '#faad14' : '#52c41a'}">${daysLeft} 天</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="detail-section">
+          <h4>技术信息</h4>
+          <div class="detail-grid">
+            <div class="detail-item">
+              <span class="detail-label">公钥算法</span>
+              <span class="detail-value">${cert.publicKeyAlgorithm}</span>
+            </div>
+            <div class="detail-item">
+              <span class="detail-label">签名算法</span>
+              <span class="detail-value">${cert.signatureAlgorithm}</span>
+            </div>
+            <div class="detail-item">
+              <span class="detail-label">密钥用途</span>
+              <span class="detail-value">${cert.keyUsage.join(', ') || 'N/A'}</span>
+            </div>
+            <div class="detail-item">
+              <span class="detail-label">扩展用途</span>
+              <span class="detail-value">${cert.extendedKeyUsage.join(', ') || 'N/A'}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="detail-section">
+          <h4>指纹信息</h4>
+          <div class="detail-item">
+            <span class="detail-label">SHA-1</span>
+            <span class="detail-value large">${cert.fingerprint.sha1}</span>
+          </div>
+          <div class="detail-item" style="margin-top: 12px;">
+            <span class="detail-label">SHA-256</span>
+            <span class="detail-value large">${cert.fingerprint.sha256}</span>
+          </div>
+        </div>
+
+        <div class="detail-section">
+          <h4>文件信息</h4>
+          <div class="detail-grid">
+            <div class="detail-item">
+              <span class="detail-label">文件格式</span>
+              <span class="detail-value">${cert.fileFormat}</span>
+            </div>
+            <div class="detail-item">
+              <span class="detail-label">来源类型</span>
+              <span class="detail-value">${cert.sourceType === 'local' ? '本机' : '共享目录'}</span>
+            </div>
+            <div class="detail-item" style="grid-column: 1 / -1;">
+              <span class="detail-label">文件路径</span>
+              <span class="detail-value large">${this.escapeHtml(cert.filePath)}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="detail-section">
+          <h4>管理信息</h4>
+          <div class="detail-grid">
+            <div class="detail-item">
+              <label class="detail-label">关联负责人</label>
+              <input type="text" id="detailResponsible" class="input" value="${this.escapeHtml(cert.responsiblePerson)}" placeholder="输入负责人">
+            </div>
+            <div class="detail-item">
+              <label class="detail-label">所属项目</label>
+              <select id="detailProject" class="select">
+                <option value="">未分类</option>
+                ${this.projects.map(p => `<option value="${p.id}" ${p.id === cert.projectId ? 'selected' : ''}>${this.escapeHtml(p.name)}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          <div class="detail-notes" style="margin-top: 16px;">
+            <label class="detail-label">备注</label>
+            <textarea id="detailNotes" placeholder="输入备注">${this.escapeHtml(cert.notes)}</textarea>
+          </div>
+        </div>
+      `;
+    }
+
+    this.showModal('modalDetail');
+  }
+
+  private async saveCertificateDetail() {
+    if (!this.selectedCertificate) return;
+
+    const responsible = (document.getElementById('detailResponsible') as HTMLInputElement).value;
+    const projectId = (document.getElementById('detailProject') as HTMLSelectElement).value;
+    const notes = (document.getElementById('detailNotes') as HTMLTextAreaElement).value;
+
+    this.selectedCertificate.responsiblePerson = responsible;
+    this.selectedCertificate.projectId = projectId;
+    this.selectedCertificate.notes = notes;
+
+    try {
+      await window.electronAPI.certificates.save(this.selectedCertificate);
+      const index = this.certificates.findIndex(c => c.id === this.selectedCertificate!.id);
+      if (index >= 0) {
+        this.certificates[index] = this.selectedCertificate;
+      }
+      this.hideModal('modalDetail');
+      this.renderCertificates();
+      this.showToast('证书信息已保存', 'success');
+    } catch (error) {
+      console.error('Failed to save certificate:', error);
+      this.showToast('保存失败', 'error');
+    }
+  }
+
+  private async deleteCertificate(id: string) {
+    if (!confirm('确定要删除此证书吗？')) return;
+
+    try {
+      await window.electronAPI.certificates.delete(id);
+      this.certificates = this.certificates.filter(c => c.id !== id);
+      this.hideModal('modalDetail');
+      this.renderCertificates();
+      this.updateStatusBar();
+      this.showToast('证书已删除', 'success');
+    } catch (error) {
+      console.error('Failed to delete certificate:', error);
+      this.showToast('删除失败', 'error');
+    }
+  }
+
+  private async showImportModal() {
+    this.updateProjectSelect('importProject');
+    this.showModal('modalImport');
+  }
+
+  private async selectFiles() {
+    try {
+      const files = await window.electronAPI.dialog.openFile();
+      if (files && files.length > 0) {
+        await this.handleFiles(files);
+      }
+    } catch (error) {
+      console.error('Failed to select files:', error);
+      this.showToast('选择文件失败', 'error');
+    }
+  }
+
+  private async handleFiles(filePaths: string[]) {
+    const projectId = (document.getElementById('importProject') as HTMLSelectElement).value;
+
+    this.showToast(`正在导入 ${filePaths.length} 个文件...`, 'success');
+
+    try {
+      const newCerts = await window.electronAPI.certificates.parseBatch(filePaths);
+      for (const cert of newCerts) {
+        cert.projectId = projectId;
+        await window.electronAPI.certificates.save(cert);
+        this.certificates.push(cert);
+      }
+
+      this.hideModal('modalImport');
+      this.renderCertificates();
+      this.updateStatusBar();
+      this.showToast(`成功导入 ${newCerts.length} 个证书`, 'success');
+    } catch (error) {
+      console.error('Failed to import certificates:', error);
+      this.showToast('导入失败', 'error');
+    }
+  }
+
+  private async scanDirectory() {
+    try {
+      const dirPath = await window.electronAPI.dialog.openDirectory();
+      if (!dirPath) return;
+
+      this.showToast('正在扫描目录...', 'success');
+
+      const files = await window.electronAPI.certificates.scanDirectory(dirPath);
+      if (files.length > 0) {
+        await this.handleFiles(files);
+      } else {
+        this.showToast('未找到证书文件', 'warning');
+      }
+    } catch (error) {
+      console.error('Failed to scan directory:', error);
+      this.showToast('扫描失败', 'error');
+    }
+  }
+
+  private updateProjectFilters() {
+    const filter = document.getElementById('filterProject') as HTMLSelectElement;
+    if (!filter) return;
+
+    filter.innerHTML = '<option value="">全部项目</option>' +
+      this.projects.map(p => `<option value="${p.id}">${this.escapeHtml(p.name)}</option>`).join('');
+  }
+
+  private updateProjectSelect(selectId: string) {
+    const select = document.getElementById(selectId) as HTMLSelectElement;
+    if (!select) return;
+
+    select.innerHTML = '<option value="">未分类</option>' +
+      this.projects.map(p => `<option value="${p.id}">${this.escapeHtml(p.name)}</option>`).join('');
+  }
+
+  private renderReminders() {
+    const list = document.getElementById('remindersList');
+    if (!list) return;
+
+    const now = new Date();
+    const certsWithDays = this.certificates.map(cert => ({
+      ...cert,
+      daysLeft: Math.ceil((new Date(cert.notAfter).getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+    }));
+
+    const urgent = certsWithDays.filter(c => c.daysLeft >= 0 && c.daysLeft <= 7);
+    const warning = certsWithDays.filter(c => c.daysLeft > 7 && c.daysLeft <= 30);
+    const notice = certsWithDays.filter(c => c.daysLeft > 30 && c.daysLeft <= 60);
+    const expired = certsWithDays.filter(c => c.daysLeft < 0);
+
+    document.getElementById('summaryTotal')!.textContent = String(this.certificates.length);
+    document.getElementById('summaryValid')!.textContent = String(certsWithDays.filter(c => c.daysLeft > 60).length);
+    document.getElementById('summaryWarning')!.textContent = String(urgent.length + warning.length + notice.length);
+    document.getElementById('summaryExpired')!.textContent = String(expired.length);
+
+    const sortedCerts = [
+      ...urgent.map(c => ({ ...c, level: 'urgent' })),
+      ...warning.map(c => ({ ...c, level: 'warning' })),
+      ...notice.map(c => ({ ...c, level: 'notice' })),
+      ...expired.map(c => ({ ...c, level: 'normal' }))
+    ];
+
+    if (sortedCerts.length === 0) {
+      list.innerHTML = '<div class="empty-state"><p>暂无到期提醒</p></div>';
+      return;
+    }
+
+    list.innerHTML = sortedCerts.map(cert => {
+      const statusText = cert.daysLeft < 0 ? `已过期 ${Math.abs(cert.daysLeft)} 天` : `剩余 ${cert.daysLeft} 天`;
+      const levelClass = cert.level;
+      const daysClass = cert.level;
+
+      return `
+        <div class="reminder-item">
+          <div class="reminder-level ${levelClass}"></div>
+          <div class="reminder-info">
+            <div class="reminder-name">${this.escapeHtml(cert.name)}</div>
+            <div class="reminder-details">${this.escapeHtml(cert.subject.split(',')[0])}</div>
+          </div>
+          <div class="reminder-days ${daysClass}">${statusText}</div>
+          <div class="reminder-actions">
+            <button class="btn btn-sm btn-secondary" onclick="app.createTaskForCert('${cert.id}')">创建任务</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  private showTaskModal(certId?: string) {
+    this.editingTask = null;
+    document.getElementById('taskModalTitle')!.textContent = '新建续期任务';
+    (document.getElementById('taskName') as HTMLInputElement).value = '';
+    (document.getElementById('taskCertificate') as HTMLSelectElement).value = certId || '';
+    (document.getElementById('taskDueDate') as HTMLInputElement).value = '';
+    (document.getElementById('taskAssignee') as HTMLInputElement).value = '';
+    (document.getElementById('taskNotes') as HTMLTextAreaElement).value = '';
+
+    const select = document.getElementById('taskCertificate') as HTMLSelectElement;
+    select.innerHTML = '<option value="">选择证书</option>' +
+      this.certificates.map(c => `<option value="${c.id}">${this.escapeHtml(c.name)}</option>`).join('');
+
+    if (certId) {
+      select.value = certId;
+    }
+
+    this.showModal('modalTask');
+  }
+
+  private createTaskForCert(certId: string) {
+    this.showTaskModal(certId);
+  }
+
+  private async saveTask() {
+    const name = (document.getElementById('taskName') as HTMLInputElement).value;
+    const certId = (document.getElementById('taskCertificate') as HTMLSelectElement).value;
+    const dueDate = (document.getElementById('taskDueDate') as HTMLInputElement).value;
+    const assignee = (document.getElementById('taskAssignee') as HTMLInputElement).value;
+    const notes = (document.getElementById('taskNotes') as HTMLTextAreaElement).value;
+
+    if (!name) {
+      this.showToast('请输入任务名称', 'warning');
+      return;
+    }
+
+    const task: RenewalTask = {
+      id: this.editingTask?.id || this.generateId(),
+      certificateId: certId,
+      taskName: name,
+      assignee,
+      dueDate: dueDate ? new Date(dueDate) : new Date(),
+      status: 'pending',
+      notes,
+      createdDate: this.editingTask?.createdDate || new Date()
+    };
+
+    try {
+      await window.electronAPI.tasks.save(task);
+      const index = this.tasks.findIndex(t => t.id === task.id);
+      if (index >= 0) {
+        this.tasks[index] = task;
+      } else {
+        this.tasks.push(task);
+      }
+      this.hideModal('modalTask');
+      this.showToast('任务已保存', 'success');
+    } catch (error) {
+      console.error('Failed to save task:', error);
+      this.showToast('保存失败', 'error');
+    }
+  }
+
+  private async runChecks() {
+    const results: CheckResult[] = [];
+
+    const checkExpired = (document.getElementById('checkExpired') as HTMLInputElement).checked;
+    const checkDuplicates = (document.getElementById('checkDuplicates') as HTMLInputElement).checked;
+
+    if (checkExpired) {
+      const now = new Date();
+      this.certificates.forEach(cert => {
+        if (new Date(cert.notAfter) <= now) {
+          results.push({
+            type: 'expired',
+            severity: 'error',
+            certificateId: cert.id,
+            certificateName: cert.name,
+            message: `证书 "${cert.name}" 已过期`,
+            details: `过期日期: ${new Date(cert.notAfter).toLocaleDateString()}`,
+            suggestion: '请及时续期或更新证书'
+          });
+        }
+      });
+    }
+
+    if (checkDuplicates) {
+      const seen = new Map<string, Certificate[]>();
+      this.certificates.forEach(cert => {
+        const key = cert.fingerprint.sha256;
+        if (seen.has(key)) {
+          seen.get(key)!.push(cert);
+        } else {
+          seen.set(key, [cert]);
+        }
+      });
+
+      seen.forEach((certs, fingerprint) => {
+        if (certs.length > 1) {
+          certs.forEach(cert => {
+            results.push({
+              type: 'duplicate',
+              severity: 'warning',
+              certificateId: cert.id,
+              certificateName: cert.name,
+              message: `发现重复证书`,
+              details: `与 ${certs.length - 1} 个其他证书具有相同的 SHA-256 指纹`,
+              suggestion: '检查是否需要保留多个副本'
+            });
+          });
+        }
+      });
+    }
+
+    this.renderCheckResultsList(results);
+    this.showToast(`检查完成，发现 ${results.length} 个问题`, results.length > 0 ? 'warning' : 'success');
+  }
+
+  private renderCheckResults() {
+    const container = document.getElementById('checkResults');
+    if (container) {
+      container.innerHTML = '<div class="empty-state"><p>点击"运行检查"开始验证</p></div>';
+    }
+  }
+
+  private renderCheckResultsList(results: CheckResult[]) {
+    const container = document.getElementById('checkResults');
+    if (!container) return;
+
+    if (results.length === 0) {
+      container.innerHTML = '<div class="empty-state"><p>未发现问题，证书状态良好！</p></div>';
+      return;
+    }
+
+    container.innerHTML = results.map(result => `
+      <div class="check-result-item">
+        <div class="check-result-header">
+          <span class="check-result-icon ${result.severity}">
+            ${result.severity === 'error' ? '❌' : result.severity === 'warning' ? '⚠️' : 'ℹ️'}
+          </span>
+          <span class="check-result-name">${this.escapeHtml(result.certificateName)}</span>
+          <span class="check-result-type">${result.type === 'expired' ? '过期' : result.type === 'duplicate' ? '重复' : result.type}</span>
+        </div>
+        <div class="check-result-message">${this.escapeHtml(result.message)}</div>
+        <div class="check-result-suggestion">💡 ${this.escapeHtml(result.suggestion)}</div>
+      </div>
+    `).join('');
+  }
+
+  private async exportReport() {
+    try {
+      const format = 'html';
+      const content = await window.electronAPI.report.generate(format);
+      const filePath = await window.electronAPI.dialog.saveFile(`certificates-report-${new Date().toISOString().split('T')[0]}.html`);
+
+      if (filePath) {
+        await window.electronAPI.report.save(content, filePath);
+        this.showToast('报告已导出', 'success');
+      }
+    } catch (error) {
+      console.error('Failed to export report:', error);
+      this.showToast('导出失败', 'error');
+    }
+  }
+
+  private renderPasswords() {
+    const list = document.getElementById('passwordsList');
+    if (!list) return;
+
+    if (this.passwords.length === 0) {
+      list.innerHTML = '<div class="empty-state"><p>暂无保存的密码</p></div>';
+      return;
+    }
+
+    list.innerHTML = this.passwords.map(entry => `
+      <div class="password-item">
+        <div class="password-icon">🔑</div>
+        <div class="password-info">
+          <div class="password-name">${this.escapeHtml(entry.name)}</div>
+          <div class="password-meta">
+            <span>创建: ${new Date(entry.createdDate).toLocaleDateString()}</span>
+            ${entry.relatedCertificateId ? `<span>关联证书: ${this.getCertificateName(entry.relatedCertificateId)}</span>` : ''}
+          </div>
+        </div>
+        <div class="password-value">
+          <span class="password-dots">••••••••</span>
+          <button class="btn btn-sm btn-secondary" onclick="app.copyPassword('${entry.id}')">复制</button>
+        </div>
+        <div class="password-actions">
+          <button class="btn btn-sm btn-secondary" onclick="app.editPassword('${entry.id}')">编辑</button>
+          <button class="btn btn-sm btn-danger" onclick="app.deletePassword('${entry.id}')">删除</button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  private getCertificateName(certId: string): string {
+    const cert = this.certificates.find(c => c.id === certId);
+    return cert ? cert.name : '未知证书';
+  }
+
+  private showPasswordModal(entry?: PasswordEntry) {
+    this.editingPassword = entry || null;
+    document.querySelector('#modalPassword h3')!.textContent = entry ? '编辑密码' : '添加密码';
+    (document.getElementById('passwordName') as HTMLInputElement).value = entry?.name || '';
+    (document.getElementById('passwordValue') as HTMLInputElement).value = entry?.password || '';
+    (document.getElementById('passwordNotes') as HTMLTextAreaElement).value = entry?.notes || '';
+
+    const select = document.getElementById('passwordCert') as HTMLSelectElement;
+    select.innerHTML = '<option value="">无</option>' +
+      this.certificates.map(c => `<option value="${c.id}" ${entry?.relatedCertificateId === c.id ? 'selected' : ''}>${this.escapeHtml(c.name)}</option>`).join('');
+
+    this.showModal('modalPassword');
+  }
+
+  private async savePassword() {
+    const name = (document.getElementById('passwordName') as HTMLInputElement).value;
+    const password = (document.getElementById('passwordValue') as HTMLInputElement).value;
+    const certId = (document.getElementById('passwordCert') as HTMLSelectElement).value;
+    const notes = (document.getElementById('passwordNotes') as HTMLTextAreaElement).value;
+
+    if (!name || !password) {
+      this.showToast('请填写名称和密码', 'warning');
+      return;
+    }
+
+    const entry: PasswordEntry = {
+      id: this.editingPassword?.id || this.generateId(),
+      name,
+      password,
+      relatedCertificateId: certId || undefined,
+      notes,
+      createdDate: this.editingPassword?.createdDate || new Date(),
+      modifiedDate: new Date()
+    };
+
+    try {
+      await window.electronAPI.passwords.save(entry);
+      const index = this.passwords.findIndex(p => p.id === entry.id);
+      if (index >= 0) {
+        this.passwords[index] = entry;
+      } else {
+        this.passwords.push(entry);
+      }
+      this.hideModal('modalPassword');
+      this.renderPasswords();
+      this.showToast('密码已保存', 'success');
+    } catch (error) {
+      console.error('Failed to save password:', error);
+      this.showToast('保存失败', 'error');
+    }
+  }
+
+  private async copyPassword(id: string) {
+    const entry = this.passwords.find(p => p.id === id);
+    if (entry) {
+      await navigator.clipboard.writeText(entry.password);
+      this.showToast('密码已复制到剪贴板', 'success');
+      setTimeout(() => {
+        navigator.clipboard.writeText('');
+      }, 30000);
+    }
+  }
+
+  private editPassword(id: string) {
+    const entry = this.passwords.find(p => p.id === id);
+    if (entry) {
+      this.showPasswordModal(entry);
+    }
+  }
+
+  private async deletePassword(id: string) {
+    if (!confirm('确定要删除此密码吗？')) return;
+
+    try {
+      await window.electronAPI.passwords.delete(id);
+      this.passwords = this.passwords.filter(p => p.id !== id);
+      this.renderPasswords();
+      this.showToast('密码已删除', 'success');
+    } catch (error) {
+      console.error('Failed to delete password:', error);
+      this.showToast('删除失败', 'error');
+    }
+  }
+
+  private updateStatusBar() {
+    const total = this.certificates.length;
+    const local = this.certificates.filter(c => c.sourceType === 'local').length;
+    const shared = this.certificates.filter(c => c.sourceType === 'shared').length;
+
+    document.getElementById('statusTotal')!.textContent = `证书总数: ${total}`;
+    document.getElementById('statusSource')!.textContent = `本机: ${local} | 共享: ${shared}`;
+  }
+
+  private showModal(id: string) {
+    const modal = document.getElementById(id);
+    if (modal) {
+      modal.classList.add('active');
+    }
+  }
+
+  private hideModal(id: string) {
+    const modal = document.getElementById(id);
+    if (modal) {
+      modal.classList.remove('active');
+    }
+  }
+
+  private showToast(message: string, type: 'success' | 'error' | 'warning') {
+    const container = document.getElementById('toastContainer');
+    if (!container) return;
+
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.textContent = message;
+    container.appendChild(toast);
+
+    setTimeout(() => {
+      toast.remove();
+    }, 3000);
+  }
+
+  private escapeHtml(text: string): string {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  private generateId(): string {
+    return Math.random().toString(36).substr(2, 9);
+  }
+}
+
+export {};
+
+interface Window {
+  app: CertManagerApp;
+}
+
+(window as any).app = new CertManagerApp();

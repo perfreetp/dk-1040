@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>证书管理器</title>
+  <link rel="stylesheet" href="styles/main.css">
+</head>
+<body>
+  <div class="app-container">
+    <header class="title-bar" id="titleBar">
+      <div class="title-bar-drag">
+        <span class="app-icon">🔐</span>
+        <span class="app-title">证书管理器</span>
+      </div>
+      <div class="title-bar-controls">
+        <button class="title-btn" id="btnMinimize" title="最小化">─</button>
+        <button class="title-btn" id="btnMaximize" title="最大化">□</button>
+        <button class="title-btn title-btn-close" id="btnClose" title="关闭">✕</button>
+      </div>
+    </header>
+
+    <nav class="nav-bar">
+      <button class="nav-item active" data-page="certificates">
+        <span class="nav-icon">📋</span>
+        <span class="nav-text">证书列表</span>
+      </button>
+      <button class="nav-item" data-page="reminders">
+        <span class="nav-icon">⏰</span>
+        <span class="nav-text">到期提醒</span>
+      </button>
+      <button class="nav-item" data-page="tools">
+        <span class="nav-icon">🔧</span>
+        <span class="nav-text">检查工具</span>
+      </button>
+      <button class="nav-item" data-page="passwords">
+        <span class="nav-icon">🔑</span>
+        <span class="nav-text">密码保险箱</span>
+      </button>
+    </nav>
+
+    <main class="main-content" id="mainContent">
+      <div id="pageCertificates" class="page active">
+        <div class="page-header">
+          <h2>证书列表</h2>
+          <div class="page-actions">
+            <button class="btn btn-primary" id="btnImport">导入证书</button>
+            <button class="btn btn-secondary" id="btnScanDir">扫描目录</button>
+          </div>
+        </div>
+        <div class="toolbar">
+          <div class="search-box">
+            <input type="text" id="searchInput" placeholder="搜索证书名称、持有人、颁发者...">
+          </div>
+          <div class="filters">
+            <select id="filterStatus" class="select">
+              <option value="">全部状态</option>
+              <option value="valid">有效</option>
+              <option value="expiring">即将过期</option>
+              <option value="expired">已过期</option>
+            </select>
+            <select id="filterProject" class="select">
+              <option value="">全部项目</option>
+            </select>
+          </div>
+        </div>
+        <div class="certificates-grid" id="certificatesGrid">
+          <div class="empty-state">
+            <p>暂无证书</p>
+            <p>点击上方"导入证书"按钮开始</p>
+          </div>
+        </div>
+      </div>
+
+      <div id="pageReminders" class="page">
+        <div class="page-header">
+          <h2>到期提醒</h2>
+          <div class="page-actions">
+            <button class="btn btn-primary" id="btnNewTask">新建续期任务</button>
+          </div>
+        </div>
+        <div class="reminders-summary">
+          <div class="summary-card summary-total">
+            <div class="summary-value" id="summaryTotal">0</div>
+            <div class="summary-label">证书总数</div>
+          </div>
+          <div class="summary-card summary-valid">
+            <div class="summary-value" id="summaryValid">0</div>
+            <div class="summary-label">有效</div>
+          </div>
+          <div class="summary-card summary-warning">
+            <div class="summary-value" id="summaryWarning">0</div>
+            <div class="summary-label">即将过期</div>
+          </div>
+          <div class="summary-card summary-expired">
+            <div class="summary-value" id="summaryExpired">0</div>
+            <div class="summary-label">已过期</div>
+          </div>
+        </div>
+        <div class="reminders-list" id="remindersList">
+          <div class="empty-state">
+            <p>暂无到期提醒</p>
+          </div>
+        </div>
+      </div>
+
+      <div id="pageTools" class="page">
+        <div class="page-header">
+          <h2>检查工具</h2>
+          <div class="page-actions">
+            <button class="btn btn-primary" id="btnRunChecks">运行检查</button>
+            <button class="btn btn-secondary" id="btnExportReport">导出报告</button>
+          </div>
+        </div>
+        <div class="checks-section">
+          <h3>检查项目</h3>
+          <div class="check-options">
+            <label class="checkbox-label">
+              <input type="checkbox" id="checkExpired" checked>
+              <span>过期检查</span>
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="checkDuplicates" checked>
+              <span>重复检查</span>
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="checkKeyMatch">
+              <span>私钥匹配</span>
+            </label>
+          </div>
+        </div>
+        <div class="check-results" id="checkResults">
+          <div class="empty-state">
+            <p>点击"运行检查"开始验证</p>
+          </div>
+        </div>
+      </div>
+
+      <div id="pagePasswords" class="page">
+        <div class="page-header">
+          <h2>密码保险箱</h2>
+          <div class="page-actions">
+            <button class="btn btn-primary" id="btnAddPassword">添加密码</button>
+          </div>
+        </div>
+        <div class="passwords-list" id="passwordsList">
+          <div class="empty-state">
+            <p>暂无保存的密码</p>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="status-bar">
+      <span id="statusTotal">证书总数: 0</span>
+      <span id="statusSource">本机: 0 | 共享: 0</span>
+    </footer>
+  </div>
+
+  <div class="modal" id="modalDetail">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content modal-lg">
+      <div class="modal-header">
+        <h3 id="detailTitle">证书详情</h3>
+        <button class="modal-close" id="btnCloseDetail">✕</button>
+      </div>
+      <div class="modal-body" id="detailBody">
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="btnOpenLocation">打开文件位置</button>
+        <button class="btn btn-secondary" id="btnCopyFingerprint">复制指纹</button>
+        <button class="btn btn-danger" id="btnDeleteCert">删除证书</button>
+        <button class="btn btn-primary" id="btnSaveDetail">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="modalImport">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>导入证书</h3>
+        <button class="modal-close" id="btnCloseImport">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="import-dropzone" id="dropzone">
+          <p>拖拽文件到此处</p>
+          <p>或</p>
+          <button class="btn btn-primary" id="btnSelectFiles">选择文件</button>
+        </div>
+        <div class="import-options">
+          <label>分配到项目:</label>
+          <select id="importProject" class="select">
+            <option value="">未分类</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="modalTask">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="taskModalTitle">新建续期任务</h3>
+        <button class="modal-close" id="btnCloseTask">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>任务名称:</label>
+          <input type="text" id="taskName" class="input" placeholder="输入任务名称">
+        </div>
+        <div class="form-group">
+          <label>关联证书:</label>
+          <select id="taskCertificate" class="select">
+            <option value="">选择证书</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>截止日期:</label>
+          <input type="date" id="taskDueDate" class="input">
+        </div>
+        <div class="form-group">
+          <label>指派人:</label>
+          <input type="text" id="taskAssignee" class="input" placeholder="输入指派人">
+        </div>
+        <div class="form-group">
+          <label>备注:</label>
+          <textarea id="taskNotes" class="textarea" rows="3" placeholder="输入备注"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="btnCancelTask">取消</button>
+        <button class="btn btn-primary" id="btnSaveTask">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="modalProject">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="projectModalTitle">新建项目</h3>
+        <button class="modal-close" id="btnCloseProject">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>项目名称:</label>
+          <input type="text" id="projectName" class="input" placeholder="输入项目名称">
+        </div>
+        <div class="form-group">
+          <label>描述:</label>
+          <textarea id="projectDescription" class="textarea" rows="3" placeholder="输入项目描述"></textarea>
+        </div>
+        <div class="form-group">
+          <label>颜色:</label>
+          <input type="color" id="projectColor" class="input-color" value="#1890ff">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="btnCancelProject">取消</button>
+        <button class="btn btn-primary" id="btnSaveProject">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="modalPassword">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>添加密码</h3>
+        <button class="modal-close" id="btnClosePassword">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>名称:</label>
+          <input type="text" id="passwordName" class="input" placeholder="输入名称">
+        </div>
+        <div class="form-group">
+          <label>密码:</label>
+          <input type="password" id="passwordValue" class="input" placeholder="输入密码">
+        </div>
+        <div class="form-group">
+          <label>关联证书:</label>
+          <select id="passwordCert" class="select">
+            <option value="">无</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>备注:</label>
+          <textarea id="passwordNotes" class="textarea" rows="3" placeholder="输入备注"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="btnCancelPassword">取消</button>
+        <button class="btn btn-primary" id="btnSavePassword">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
