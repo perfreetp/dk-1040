@@ -103,7 +103,17 @@ export class PasswordVault {
     }
 
     const entries = await this.dataStore.getPasswords();
-    entry.password = this.encrypt(entry.password, this.currentMasterPassword);
+
+    if (entry.keepOriginal) {
+      const existingEntry = entries.find(e => e.id === entry.id);
+      if (existingEntry) {
+        entry.password = existingEntry.password;
+      }
+    } else {
+      entry.password = this.encrypt(entry.password, this.currentMasterPassword);
+    }
+
+    delete entry.keepOriginal;
     entry.modifiedDate = new Date();
 
     const index = entries.findIndex(e => e.id === entry.id);

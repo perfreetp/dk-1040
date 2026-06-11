@@ -48,6 +48,7 @@ interface PasswordEntry {
   notes: string;
   createdDate: Date;
   modifiedDate: Date;
+  keepOriginal?: boolean;
 }
 
 interface CheckResult {
@@ -440,14 +441,14 @@ class CertManagerApp {
     let chainHtml = '<p style="color: var(--text-secondary);">正在获取证书链路...</p>';
     try {
       const chain = await electronAPI.certificates.getChain(cert.filePath);
-      if (chain && chain.length > 0) {
+      if (chain && chain.length > 1) {
         chainHtml = chain.map((item: any, index: number) => `<div class="chain-item" style="padding: 12px; border: 1px solid var(--border); border-radius: 4px; margin-bottom: 8px; ${index === 0 ? 'background: rgba(24, 144, 255, 0.05);' : ''}"><div style="font-weight: 600; margin-bottom: 4px;">${index === 0 ? '🔒 ' : index === chain.length - 1 ? '🌿 ' : '📜 '}${this.escapeHtml(item.subject.split(',')[0] || item.subject)}${item.isRoot ? ' (根证书)' : ''}</div><div style="font-size: 12px; color: var(--text-secondary);">颁发者: ${this.escapeHtml(item.issuer.split(',')[0] || item.issuer)}</div><div style="font-size: 12px; color: var(--text-secondary);">序列号: ${this.escapeHtml(item.serialNumber)}</div><div style="font-size: 12px; color: ${new Date(item.notAfter) < new Date() ? 'var(--danger)' : 'var(--secondary)'};">过期时间: ${new Date(item.notAfter).toLocaleDateString()}</div></div>`).join('');
       } else {
-        chainHtml = '<p style="color: var(--text-secondary);">⚠️ 未检测到完整的证书链路（可能为自签名证书或缺少中间证书）</p>';
+        chainHtml = '<p style="color: var(--text-secondary);">⚠️ 没有完整的证书链路（当前文件只包含单张证书）</p>';
       }
     } catch (error) {
       console.error('Failed to get certificate chain:', error);
-      chainHtml = '<p style="color: var(--text-secondary);">⚠️ 未检测到完整的证书链路（可能为自签名证书或缺少中间证书）</p>';
+      chainHtml = '<p style="color: var(--text-secondary);">⚠️ 没有完整的证书链路（当前文件只包含单张证书）</p>';
     }
 
     const body = document.getElementById('detailBody');
@@ -871,12 +872,31 @@ class CertManagerApp {
 
   private async renderPasswords() {
     const list = document.getElementById('passwordsList');
+    const header = document.querySelector('#pagePasswords .page-header');
     if (!list) return;
 
+    const isSet = await electronAPI.passwords.isSet();
     const isUnlocked = await electronAPI.passwords.isUnlocked();
-    if (!isUnlocked) {
-      list.innerHTML = '<div class="empty-state"><p>🔒 密码保险箱已锁定</p><p>点击下方按钮解锁查看密码</p><button class="btn btn-primary" onclick="app.unlockPasswords()">解锁密码保险箱</button></div>';
+
+    if (!isSet) {
+      if (header) {
+        header.innerHTML = `<h2>密码保险箱</h2>`;
+      }
+      list.innerHTML = `<div class="empty-state"><p>🔐 密码保险箱未设置</p><p>请先设置主密码以保护您的密码</p><div style="margin-top: 16px;"><div style="margin-bottom: 12px;"><input type="password" id="setupNewPass" placeholder="设置主密码（至少6位）" style="width: 100%; height: 40px; padding: 0 12px; border: 1px solid var(--border); border-radius: 4px;"></div><div style="margin-bottom: 12px;"><input type="password" id="setupConfirmPass" placeholder="确认主密码" style="width: 100%; height: 40px; padding: 0 12px; border: 1px solid var(--border); border-radius: 4px;"></div><button class="btn btn-primary" onclick="app.setupMasterPassword()" style="width: 100%;">设置主密码</button></div></div>`;
       return;
+    }
+
+    if (!isUnlocked) {
+      if (header) {
+        header.innerHTML = `<h2>密码保险箱</h2>`;
+      }
+      list.innerHTML = `<div class="empty-state"><p>🔒 密码保险箱已锁定</p><p>请输入主密码解锁</p><div style="margin-top: 16px;"><input type="password" id="unlockPassInput" placeholder="输入主密码" style="width: 100%; height: 40px; padding: 0 12px; border: 1px solid var(--border); border-radius: 4px; margin-bottom: 12px;"><button class="btn btn-primary" onclick="app.unlockPasswords()" style="width: 100%;">解锁</button></div></div>`;
+      return;
+    }
+
+    if (header) {
+      header.innerHTML = `<h2>密码保险箱</h2><div class="page-actions"><button class="btn btn-primary" id="btnAddPassword">添加密码</button></div>`;
+      document.getElementById('btnAddPassword')?.addEventListener('click', () => this.showPasswordModal());
     }
 
     if (this.passwords.length === 0) {
@@ -887,9 +907,40 @@ class CertManagerApp {
     list.innerHTML = this.passwords.map(entry => `<div class="password-item"><div class="password-icon">🔑</div><div class="password-info"><div class="password-name">${this.escapeHtml(entry.name)}</div><div class="password-meta"><span>创建: ${new Date(entry.createdDate).toLocaleDateString()}</span>${entry.relatedCertificateId ? `<span>关联证书: ${this.getCertificateName(entry.relatedCertificateId)}</span>` : ''}</div></div><div class="password-value"><span class="password-dots">••••••••</span><button class="btn btn-sm btn-secondary" onclick="app.copyPassword('${entry.id}')">复制</button></div><div class="password-actions"><button class="btn btn-sm btn-secondary" onclick="app.editPassword('${entry.id}')">编辑</button><button class="btn btn-sm btn-danger" onclick="app.deletePassword('${entry.id}')">删除</button></div></div>`).join('');
   }
 
+  public async setupMasterPassword() {
+    const newPass = (document.getElementById('setupNewPass') as HTMLInputElement).value;
+    const confirmPass = (document.getElementById('setupConfirmPass') as HTMLInputElement).value;
+
+    if (!newPass) {
+      this.showToast('请输入主密码', 'warning');
+      return;
+    }
+    if (newPass.length < 6) {
+      this.showToast('主密码至少需要6个字符', 'warning');
+      return;
+    }
+    if (newPass !== confirmPass) {
+      this.showToast('两次输入的密码不一致', 'warning');
+      return;
+    }
+
+    try {
+      await electronAPI.passwords.setMaster(newPass);
+      this.passwords = await electronAPI.passwords.getAll();
+      await this.renderPasswords();
+      this.showToast('主密码设置成功', 'success');
+    } catch (error) {
+      console.error('Failed to set master password:', error);
+      this.showToast('设置失败', 'error');
+    }
+  }
+
   public async unlockPasswords() {
-    const password = prompt('请输入主密码:');
-    if (!password) return;
+    const password = (document.getElementById('unlockPassInput') as HTMLInputElement)?.value;
+    if (!password) {
+      this.showToast('请输入主密码', 'warning');
+      return;
+    }
 
     try {
       const isValid = await electronAPI.passwords.verifyMaster(password);
@@ -915,7 +966,8 @@ class CertManagerApp {
     this.editingPassword = entry || null;
     document.querySelector('#modalPassword h3')!.textContent = entry ? '编辑密码' : '添加密码';
     (document.getElementById('passwordName') as HTMLInputElement).value = entry?.name || '';
-    (document.getElementById('passwordValue') as HTMLInputElement).value = entry?.password || '';
+    (document.getElementById('passwordValue') as HTMLInputElement).value = '';
+    (document.getElementById('passwordValue') as HTMLInputElement).placeholder = entry ? '留空则保留原密码' : '输入密码';
     (document.getElementById('passwordNotes') as HTMLTextAreaElement).value = entry?.notes || '';
 
     const select = document.getElementById('passwordCert') as HTMLSelectElement;
@@ -930,19 +982,27 @@ class CertManagerApp {
     const certId = (document.getElementById('passwordCert') as HTMLSelectElement).value;
     const notes = (document.getElementById('passwordNotes') as HTMLTextAreaElement).value;
 
-    if (!name || !password) {
-      this.showToast('请填写名称和密码', 'warning');
+    if (!name) {
+      this.showToast('请填写名称', 'warning');
       return;
     }
+
+    if (!password && !this.editingPassword) {
+      this.showToast('请填写密码', 'warning');
+      return;
+    }
+
+    const actualPassword = password || (this.editingPassword ? '___KEEP_ORIGINAL___' : '');
 
     const entry: PasswordEntry = {
       id: this.editingPassword?.id || this.generateId(),
       name,
-      password,
+      password: actualPassword,
       relatedCertificateId: certId || undefined,
       notes,
       createdDate: this.editingPassword?.createdDate || new Date(),
-      modifiedDate: new Date()
+      modifiedDate: new Date(),
+      keepOriginal: !!password ? false : !!this.editingPassword
     };
 
     try {
@@ -964,6 +1024,11 @@ class CertManagerApp {
 
   public async copyPassword(id: string) {
     try {
+      const isUnlocked = await electronAPI.passwords.isUnlocked();
+      if (!isUnlocked) {
+        this.showToast('密码保险箱已锁定，请先解锁', 'error');
+        return;
+      }
       const password = await electronAPI.passwords.getDecrypted(id);
       await navigator.clipboard.writeText(password);
       this.showToast('密码已复制到剪贴板', 'success');
@@ -984,11 +1049,16 @@ class CertManagerApp {
   }
 
   public async deletePassword(id: string) {
-    if (!confirm('确定要删除此密码吗？')) return;
     try {
+      const isUnlocked = await electronAPI.passwords.isUnlocked();
+      if (!isUnlocked) {
+        this.showToast('密码保险箱已锁定，请先解锁', 'error');
+        return;
+      }
+      if (!confirm('确定要删除此密码吗？')) return;
       await electronAPI.passwords.delete(id);
-      this.passwords = this.passwords.filter(p => p.id !== id);
-      this.renderPasswords();
+      this.passwords = await electronAPI.passwords.getAll();
+      await this.renderPasswords();
       this.showToast('密码已删除', 'success');
     } catch (error) {
       console.error('Failed to delete password:', error);

@@ -51,6 +51,7 @@ export interface PasswordEntry {
   notes: string;
   createdDate: Date;
   modifiedDate: Date;
+  keepOriginal?: boolean;
 }
 
 export interface CheckResult {
