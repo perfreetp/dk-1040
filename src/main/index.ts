@@ -155,6 +155,15 @@ function setupIpcHandlers(): void {
     return await dataStore.getCertificates();
   });
 
+  ipcMain.handle('certificates:get-chain', async (_, filePath: string) => {
+    try {
+      return await certificateParser.getCertificateChain(filePath);
+    } catch (error) {
+      console.error('Error getting certificate chain:', error);
+      return [];
+    }
+  });
+
   ipcMain.handle('projects:get-all', async () => {
     return await dataStore.getProjects();
   });

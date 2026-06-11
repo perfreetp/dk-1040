@@ -149,13 +149,24 @@ export class CertificateParser {
 
   async checkKeyMatch(certPath: string, keyPath: string): Promise<boolean> {
     try {
-      const cert = await this.parseCertificate(certPath);
-      const keyContent = fs.readFileSync(keyPath, 'utf-8');
+      const certPem = fs.readFileSync(certPath, 'utf-8');
+      let certificate: forge.pki.Certificate;
 
+      if (certPath.toLowerCase().endsWith('.pem')) {
+        const certMatch = certPem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/);
+        if (!certMatch) return false;
+        certificate = forge.pki.certificateFromPem(certMatch[0]);
+      } else {
+        const content = fs.readFileSync(certPath);
+        const asn1 = forge.asn1.fromDer(forge.util.createBuffer(content.toString('binary')));
+        certificate = forge.pki.certificateFromAsn1(asn1);
+      }
+
+      const keyContent = fs.readFileSync(keyPath, 'utf-8');
       let privateKey: forge.pki.rsa.PrivateKey;
-      if (keyContent.includes('-----BEGIN RSA PRIVATE KEY-----')) {
-        privateKey = forge.pki.privateKeyFromPem(keyContent);
-      } else if (keyContent.includes('-----BEGIN PRIVATE KEY-----')) {
+      let publicKey: forge.pki.rsa.PublicKey;
+
+      if (keyContent.includes('-----BEGIN RSA PRIVATE KEY-----') || keyContent.includes('-----BEGIN PRIVATE KEY-----')) {
         privateKey = forge.pki.privateKeyFromPem(keyContent);
       } else {
         const keyBuffer = Buffer.from(keyContent, 'utf-8');
@@ -165,13 +176,92 @@ export class CertificateParser {
         privateKey = forge.pki.privateKeyFromAsn1(keyAsn1);
       }
 
-      const certPublicKey = (await this.parseCertificate(certPath)).serialNumber;
-      const modulus = privateKey.n.toString(16);
+      publicKey = certificate.publicKey as forge.pki.rsa.PublicKey;
 
-      return modulus.length > 0;
+      if (!publicKey || !privateKey) return false;
+
+      const certModulus = (publicKey.n as any).toString(16);
+      const keyModulus = (privateKey.n as any).toString(16);
+
+      return certModulus === keyModulus;
     } catch (error) {
       console.error('Key match check error:', error);
       return false;
     }
+  }
+
+  async getCertificateChain(filePath: string): Promise<any[]> {
+    try {
+      const chain: any[] = [];
+      const content = fs.readFileSync(filePath);
+      let mainCert: forge.pki.Certificate;
+
+      if (filePath.toLowerCase().endsWith('.pem')) {
+        const pemContent = content.toString('utf-8');
+        const certMatch = pemContent.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/);
+        if (certMatch) {
+          mainCert = forge.pki.certificateFromPem(certMatch[0]);
+        } else {
+          return [];
+        }
+      } else {
+        const asn1 = forge.asn1.fromDer(forge.util.createBuffer(content.toString('binary')));
+        mainCert = forge.pki.certificateFromAsn1(asn1);
+      }
+
+      chain.push({
+        subject: this.formatDN(mainCert.subject),
+        issuer: this.formatDN(mainCert.issuer),
+        serialNumber: mainCert.serialNumber,
+        notAfter: mainCert.validity.notAfter,
+        isRoot: this.formatDN(mainCert.subject) === this.formatDN(mainCert.issuer),
+        level: 0
+      });
+
+      let currentIssuer = mainCert.issuer;
+      let currentCert = mainCert;
+      let depth = 1;
+      const maxDepth = 10;
+      const seen = new Set<string>();
+
+      while (depth < maxDepth) {
+        const issuerStr = this.formatDN(currentIssuer);
+        if (issuerStr === this.formatDN(currentCert.subject)) {
+          break;
+        }
+
+        if (seen.has(issuerStr)) {
+          break;
+        }
+        seen.add(issuerStr);
+
+        const issuerCert = await this.findIssuerCert(currentCert, filePath);
+        if (!issuerCert) {
+          break;
+        }
+
+        chain.push({
+          subject: this.formatDN(issuerCert.subject),
+          issuer: this.formatDN(issuerCert.issuer),
+          serialNumber: issuerCert.serialNumber,
+          notAfter: issuerCert.validity.notAfter,
+          isRoot: this.formatDN(issuerCert.subject) === this.formatDN(issuerCert.issuer),
+          level: depth
+        });
+
+        currentIssuer = issuerCert.issuer;
+        currentCert = issuerCert;
+        depth++;
+      }
+
+      return chain;
+    } catch (error) {
+      console.error('Error getting certificate chain:', error);
+      return [];
+    }
+  }
+
+  private async findIssuerCert(cert: forge.pki.Certificate, certPath: string): Promise<forge.pki.Certificate | null> {
+    return null;
   }
 }

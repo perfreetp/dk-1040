@@ -21,7 +21,9 @@ const electronAPI = {
     delete: (id: string): Promise<void> =>
       ipcRenderer.invoke('certificates:delete', id),
     getAll: (): Promise<Certificate[]> =>
-      ipcRenderer.invoke('certificates:get-all')
+      ipcRenderer.invoke('certificates:get-all'),
+    getChain: (filePath: string): Promise<any[]> =>
+      ipcRenderer.invoke('certificates:get-chain', filePath)
   },
   projects: {
     getAll: (): Promise<Project[]> =>

@@ -5,8 +5,10 @@
   "main": "dist/main/index.js",
   "scripts": {
     "start": "npm run build && electron .",
-    "dev": "tsc && electron .",
-    "build": "tsc",
+    "dev": "npm run build && electron .",
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.renderer.json",
+    "build:main": "tsc -p tsconfig.json",
+    "build:renderer": "tsc -p tsconfig.renderer.json",
     "package": "npm run build && electron-builder --win --x64",
     "package:dir": "npm run build && electron-builder --win --x64 --dir"
   },
@@ -50,7 +52,9 @@
     },
     "files": [
       "dist/**/*",
-      "src/renderer/**/*",
+      "src/renderer/**/*.js",
+      "src/renderer/**/*.html",
+      "src/renderer/**/*.css",
       "assets/**/*"
     ],
     "extraResources": [
