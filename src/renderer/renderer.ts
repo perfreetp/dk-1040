@@ -100,12 +100,14 @@ interface ElectronAPI {
     getAll: () => Promise<any[]>;
     save: (entry: any) => Promise<void>;
     delete: (id: string) => Promise<void>;
+    getDecrypted: (id: string) => Promise<string>;
     verifyMaster: (password: string) => Promise<boolean>;
     setMaster: (password: string) => Promise<void>;
     isSet: () => Promise<boolean>;
+    isUnlocked: () => Promise<boolean>;
   };
   dialog: {
-    openFile: () => Promise<string[]>;
+    openFile: (filters?: string) => Promise<string[]>;
     openDirectory: () => Promise<string>;
     saveFile: (defaultPath: string) => Promise<string>;
   };
@@ -121,7 +123,7 @@ interface ElectronAPI {
     openPath: (filePath: string) => Promise<void>;
   };
   check: {
-    keyMatch: (certPath: string, keyPath: string) => Promise<boolean>;
+    keyMatch: (certId: string, keyPath: string) => Promise<boolean>;
     duplicates: () => Promise<any[]>;
   };
 }
@@ -782,42 +784,51 @@ class CertManagerApp {
     }
 
     if (checkKeyMatch) {
-      try {
-        const keyFiles = await electronAPI.dialog.openFile();
-        if (keyFiles && keyFiles.length > 0) {
-          for (const cert of this.certificates) {
-            for (const keyFile of keyFiles) {
-              try {
-                const isMatch = await electronAPI.check.keyMatch(cert.filePath, keyFile);
-                results.push({
-                  type: 'key_match',
-                  severity: isMatch ? 'info' : 'warning',
-                  certificateId: cert.id,
-                  certificateName: cert.name,
-                  message: isMatch ? `✅ 私钥匹配成功` : `❌ 私钥不匹配`,
-                  details: `证书: ${cert.name}\n私钥文件: ${keyFile}`,
-                  suggestion: isMatch ? '证书和私钥匹配正确' : '该私钥不是此证书的正确私钥，请检查私钥文件'
-                });
-              } catch (err) {
-                console.error(`Key match check failed for ${cert.name}:`, err);
-                results.push({
-                  type: 'key_match',
-                  severity: 'warning',
-                  certificateId: cert.id,
-                  certificateName: cert.name,
-                  message: `❌ 无法验证私钥匹配`,
-                  details: `证书: ${cert.name}\n私钥文件: ${keyFile}\n错误: ${err}`,
-                  suggestion: '无法读取私钥文件，请确保文件格式正确'
-                });
-              }
-            }
-          }
-        } else {
-          this.showToast('请选择私钥文件', 'warning');
+      if (this.certificates.length === 0) {
+        this.showToast('请先导入证书', 'warning');
+        return;
+      }
+
+      const certId = prompt(`请输入要匹配的证书序号 (1-${this.certificates.length}):\n${this.certificates.map((c, i) => `${i + 1}. ${c.name}`).join('\n')}`);
+      if (!certId) return;
+
+      const index = parseInt(certId, 10) - 1;
+      if (isNaN(index) || index < 0 || index >= this.certificates.length) {
+        this.showToast('无效的证书序号', 'error');
+        return;
+      }
+
+      const selectedCert = this.certificates[index];
+
+      const keyFiles = await electronAPI.dialog.openFile('key');
+      if (keyFiles && keyFiles.length > 0) {
+        const keyFile = keyFiles[0];
+        try {
+          const isMatch = await electronAPI.check.keyMatch(selectedCert.id, keyFile);
+          results.push({
+            type: 'key_match',
+            severity: isMatch ? 'info' : 'warning',
+            certificateId: selectedCert.id,
+            certificateName: selectedCert.name,
+            message: isMatch ? `✅ 私钥匹配成功` : `❌ 私钥不匹配`,
+            details: `证书: ${selectedCert.name}\n证书序列号: ${selectedCert.serialNumber}\n私钥文件: ${keyFile}`,
+            suggestion: isMatch ? '证书和私钥匹配正确' : '该私钥不是此证书的正确私钥，请检查私钥文件是否正确'
+          });
+        } catch (err) {
+          console.error(`Key match check failed:`, err);
+          results.push({
+            type: 'key_match',
+            severity: 'warning',
+            certificateId: selectedCert.id,
+            certificateName: selectedCert.name,
+            message: `❌ 无法验证私钥匹配`,
+            details: `证书: ${selectedCert.name}\n私钥文件: ${keyFile}\n错误: ${err}`,
+            suggestion: '无法读取私钥文件，请确保文件格式正确（支持 .key, .pem 格式）'
+          });
         }
-      } catch (error) {
-        console.error('Failed to select key files:', error);
-        this.showToast('选择私钥文件失败', 'error');
+      } else {
+        this.showToast('未选择私钥文件', 'warning');
+        return;
       }
     }
 
@@ -858,9 +869,15 @@ class CertManagerApp {
     }
   }
 
-  private renderPasswords() {
+  private async renderPasswords() {
     const list = document.getElementById('passwordsList');
     if (!list) return;
+
+    const isUnlocked = await electronAPI.passwords.isUnlocked();
+    if (!isUnlocked) {
+      list.innerHTML = '<div class="empty-state"><p>🔒 密码保险箱已锁定</p><p>点击下方按钮解锁查看密码</p><button class="btn btn-primary" onclick="app.unlockPasswords()">解锁密码保险箱</button></div>';
+      return;
+    }
 
     if (this.passwords.length === 0) {
       list.innerHTML = '<div class="empty-state"><p>暂无保存的密码</p></div>';
@@ -868,6 +885,25 @@ class CertManagerApp {
     }
 
     list.innerHTML = this.passwords.map(entry => `<div class="password-item"><div class="password-icon">🔑</div><div class="password-info"><div class="password-name">${this.escapeHtml(entry.name)}</div><div class="password-meta"><span>创建: ${new Date(entry.createdDate).toLocaleDateString()}</span>${entry.relatedCertificateId ? `<span>关联证书: ${this.getCertificateName(entry.relatedCertificateId)}</span>` : ''}</div></div><div class="password-value"><span class="password-dots">••••••••</span><button class="btn btn-sm btn-secondary" onclick="app.copyPassword('${entry.id}')">复制</button></div><div class="password-actions"><button class="btn btn-sm btn-secondary" onclick="app.editPassword('${entry.id}')">编辑</button><button class="btn btn-sm btn-danger" onclick="app.deletePassword('${entry.id}')">删除</button></div></div>`).join('');
+  }
+
+  public async unlockPasswords() {
+    const password = prompt('请输入主密码:');
+    if (!password) return;
+
+    try {
+      const isValid = await electronAPI.passwords.verifyMaster(password);
+      if (isValid) {
+        this.passwords = await electronAPI.passwords.getAll();
+        await this.renderPasswords();
+        this.showToast('密码保险箱已解锁', 'success');
+      } else {
+        this.showToast('主密码错误', 'error');
+      }
+    } catch (error) {
+      console.error('Failed to unlock:', error);
+      this.showToast('解锁失败', 'error');
+    }
   }
 
   private getCertificateName(certId: string): string {
@@ -927,13 +963,16 @@ class CertManagerApp {
   }
 
   public async copyPassword(id: string) {
-    const entry = this.passwords.find(p => p.id === id);
-    if (entry) {
-      await navigator.clipboard.writeText(entry.password);
+    try {
+      const password = await electronAPI.passwords.getDecrypted(id);
+      await navigator.clipboard.writeText(password);
       this.showToast('密码已复制到剪贴板', 'success');
       setTimeout(() => {
         navigator.clipboard.writeText('');
       }, 30000);
+    } catch (error) {
+      console.error('Failed to copy password:', error);
+      this.showToast('复制失败，请先解锁密码保险箱', 'error');
     }
   }
 

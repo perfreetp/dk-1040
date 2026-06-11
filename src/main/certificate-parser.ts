@@ -194,29 +194,75 @@ export class CertificateParser {
     try {
       const chain: any[] = [];
       const content = fs.readFileSync(filePath);
-      let mainCert: forge.pki.Certificate;
+      const allCerts: forge.pki.Certificate[] = [];
 
       if (filePath.toLowerCase().endsWith('.pem')) {
         const pemContent = content.toString('utf-8');
-        const certMatch = pemContent.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/);
-        if (certMatch) {
-          mainCert = forge.pki.certificateFromPem(certMatch[0]);
+        const certMatches = pemContent.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g);
+
+        if (certMatches && certMatches.length > 0) {
+          for (const certPem of certMatches) {
+            try {
+              const cert = forge.pki.certificateFromPem(certPem);
+              allCerts.push(cert);
+            } catch (err) {
+              console.error('Failed to parse certificate from PEM:', err);
+            }
+          }
         } else {
           return [];
         }
       } else {
-        const asn1 = forge.asn1.fromDer(forge.util.createBuffer(content.toString('binary')));
-        mainCert = forge.pki.certificateFromAsn1(asn1);
+        try {
+          const asn1 = forge.asn1.fromDer(forge.util.createBuffer(content.toString('binary')));
+          const cert = forge.pki.certificateFromAsn1(asn1);
+          allCerts.push(cert);
+        } catch (err) {
+          console.error('Failed to parse certificate:', err);
+          return [];
+        }
       }
+
+      if (allCerts.length === 0) {
+        return [];
+      }
+
+      const mainCert = allCerts[0];
+
+      const isSelfSigned = this.formatDN(mainCert.subject) === this.formatDN(mainCert.issuer);
 
       chain.push({
         subject: this.formatDN(mainCert.subject),
         issuer: this.formatDN(mainCert.issuer),
         serialNumber: mainCert.serialNumber,
         notAfter: mainCert.validity.notAfter,
-        isRoot: this.formatDN(mainCert.subject) === this.formatDN(mainCert.issuer),
+        isRoot: isSelfSigned,
         level: 0
       });
+
+      if (isSelfSigned || allCerts.length === 1) {
+        if (allCerts.length > 1) {
+          for (let i = 1; i < allCerts.length; i++) {
+            const cert = allCerts[i];
+            const certIsRoot = this.formatDN(cert.subject) === this.formatDN(cert.issuer);
+            chain.push({
+              subject: this.formatDN(cert.subject),
+              issuer: this.formatDN(cert.issuer),
+              serialNumber: cert.serialNumber,
+              notAfter: cert.validity.notAfter,
+              isRoot: certIsRoot,
+              level: i
+            });
+          }
+        }
+        return chain;
+      }
+
+      const certBySubject = new Map<string, forge.pki.Certificate>();
+      for (let i = 1; i < allCerts.length; i++) {
+        const cert = allCerts[i];
+        certBySubject.set(this.formatDN(cert.subject), cert);
+      }
 
       let currentIssuer = mainCert.issuer;
       let currentCert = mainCert;
@@ -226,6 +272,7 @@ export class CertificateParser {
 
       while (depth < maxDepth) {
         const issuerStr = this.formatDN(currentIssuer);
+
         if (issuerStr === this.formatDN(currentCert.subject)) {
           break;
         }
@@ -235,22 +282,28 @@ export class CertificateParser {
         }
         seen.add(issuerStr);
 
-        const issuerCert = await this.findIssuerCert(currentCert, filePath);
-        if (!issuerCert) {
+        const issuerCert = certBySubject.get(issuerStr);
+
+        if (issuerCert) {
+          chain.push({
+            subject: this.formatDN(issuerCert.subject),
+            issuer: this.formatDN(issuerCert.issuer),
+            serialNumber: issuerCert.serialNumber,
+            notAfter: issuerCert.validity.notAfter,
+            isRoot: this.formatDN(issuerCert.subject) === this.formatDN(issuerCert.issuer),
+            level: depth
+          });
+
+          if (this.formatDN(issuerCert.subject) === this.formatDN(issuerCert.issuer)) {
+            break;
+          }
+
+          currentIssuer = issuerCert.issuer;
+          currentCert = issuerCert;
+        } else {
           break;
         }
 
-        chain.push({
-          subject: this.formatDN(issuerCert.subject),
-          issuer: this.formatDN(issuerCert.issuer),
-          serialNumber: issuerCert.serialNumber,
-          notAfter: issuerCert.validity.notAfter,
-          isRoot: this.formatDN(issuerCert.subject) === this.formatDN(issuerCert.issuer),
-          level: depth
-        });
-
-        currentIssuer = issuerCert.issuer;
-        currentCert = issuerCert;
         depth++;
       }
 
@@ -261,7 +314,7 @@ export class CertificateParser {
     }
   }
 
-  private async findIssuerCert(cert: forge.pki.Certificate, certPath: string): Promise<forge.pki.Certificate | null> {
+  private findIssuerCert(cert: forge.pki.Certificate, certPath: string): forge.pki.Certificate | null {
     return null;
   }
 }

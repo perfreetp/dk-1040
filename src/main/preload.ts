@@ -48,16 +48,20 @@ const electronAPI = {
       ipcRenderer.invoke('passwords:save', entry),
     delete: (id: string): Promise<void> =>
       ipcRenderer.invoke('passwords:delete', id),
+    getDecrypted: (id: string): Promise<string> =>
+      ipcRenderer.invoke('passwords:get-decrypted', id),
     verifyMaster: (password: string): Promise<boolean> =>
       ipcRenderer.invoke('passwords:verify-master', password),
     setMaster: (password: string): Promise<void> =>
       ipcRenderer.invoke('passwords:set-master', password),
     isSet: (): Promise<boolean> =>
-      ipcRenderer.invoke('passwords:is-set')
+      ipcRenderer.invoke('passwords:is-set'),
+    isUnlocked: (): Promise<boolean> =>
+      ipcRenderer.invoke('passwords:is-unlocked')
   },
   dialog: {
-    openFile: (): Promise<string[]> =>
-      ipcRenderer.invoke('dialog:open-file'),
+    openFile: (filters?: string): Promise<string[]> =>
+      ipcRenderer.invoke('dialog:open-file', filters),
     openDirectory: (): Promise<string> =>
       ipcRenderer.invoke('dialog:open-directory'),
     saveFile: (defaultPath: string): Promise<string> =>
@@ -80,8 +84,8 @@ const electronAPI = {
       ipcRenderer.invoke('shell:open-path', filePath)
   },
   check: {
-    keyMatch: (certPath: string, keyPath: string): Promise<boolean> =>
-      ipcRenderer.invoke('check:key-match', certPath, keyPath),
+    keyMatch: (certId: string, keyPath: string): Promise<boolean> =>
+      ipcRenderer.invoke('check:key-match', certId, keyPath),
     duplicates: (): Promise<any[]> =>
       ipcRenderer.invoke('check:duplicates')
   }

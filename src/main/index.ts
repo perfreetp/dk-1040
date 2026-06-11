@@ -210,24 +210,23 @@ function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('passwords:get-all', async () => {
-    return await dataStore.getPasswords();
+    return await passwordVault.getPasswords();
   });
 
   ipcMain.handle('passwords:save', async (_, entry: PasswordEntry) => {
-    const entries = await dataStore.getPasswords();
-    const index = entries.findIndex(e => e.id === entry.id);
-    if (index >= 0) {
-      entries[index] = entry;
-    } else {
-      entries.push(entry);
-    }
-    await dataStore.savePasswords(entries);
+    await passwordVault.savePassword(entry);
   });
 
   ipcMain.handle('passwords:delete', async (_, id: string) => {
-    const entries = await dataStore.getPasswords();
-    const filtered = entries.filter(e => e.id !== id);
-    await dataStore.savePasswords(filtered);
+    await passwordVault.deletePassword(id);
+  });
+
+  ipcMain.handle('passwords:get-decrypted', async (_, id: string) => {
+    return await passwordVault.getDecryptedPassword(id);
+  });
+
+  ipcMain.handle('passwords:is-unlocked', async () => {
+    return passwordVault.isVaultUnlocked();
   });
 
   ipcMain.handle('passwords:verify-master', async (_, password: string) => {
@@ -242,13 +241,27 @@ function setupIpcHandlers(): void {
     return passwordVault.isMasterPasswordSet();
   });
 
-  ipcMain.handle('dialog:open-file', async () => {
-    const result = await dialog.showOpenDialog({
-      properties: ['openFile', 'multiSelections'],
-      filters: [
+  ipcMain.handle('dialog:open-file', async (_, filters?: string) => {
+    let fileFilters = [
+      { name: 'Certificates', extensions: ['cer', 'crt', 'pem', 'der', 'pfx', 'p12'] },
+      { name: 'All Files', extensions: ['*'] }
+    ];
+
+    if (filters === 'key') {
+      fileFilters = [
+        { name: 'Private Keys', extensions: ['key', 'pem', 'priv', 'pk8'] },
+        { name: 'All Files', extensions: ['*'] }
+      ];
+    } else if (filters === 'cert') {
+      fileFilters = [
         { name: 'Certificates', extensions: ['cer', 'crt', 'pem', 'der', 'pfx', 'p12'] },
         { name: 'All Files', extensions: ['*'] }
-      ]
+      ];
+    }
+
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile', 'multiSelections'],
+      filters: fileFilters
     });
     if (result.canceled) {
       return [];
@@ -300,8 +313,13 @@ function setupIpcHandlers(): void {
     shell.showItemInFolder(filePath);
   });
 
-  ipcMain.handle('check:key-match', async (_, certPath: string, keyPath: string) => {
-    return await certificateParser.checkKeyMatch(certPath, keyPath);
+  ipcMain.handle('check:key-match', async (_, certId: string, keyPath: string) => {
+    const certs = await dataStore.getCertificates();
+    const cert = certs.find(c => c.id === certId);
+    if (!cert) {
+      throw new Error('Certificate not found');
+    }
+    return await certificateParser.checkKeyMatch(cert.filePath, keyPath);
   });
 
   ipcMain.handle('check:duplicates', async () => {
