@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { app } from 'electron';
-import { Certificate, Project, RenewalTask, PasswordEntry, AppSettings } from '../shared/types';
+import { Certificate, Project, RenewalTask, PasswordEntry, AppSettings, KeyMatchRecord } from '../shared/types';
 
 export class DataStore {
   private dataPath: string;
@@ -145,6 +145,30 @@ export class DataStore {
   async saveSettings(settings: AppSettings): Promise<void> {
     const filePath = this.getFilePath('settings.json');
     fs.writeFileSync(filePath, JSON.stringify(settings, null, 2), 'utf-8');
+  }
+
+  async getKeyMatchHistory(): Promise<KeyMatchRecord[]> {
+    const filePath = this.getFilePath('key-match-history.json');
+    try {
+      if (fs.existsSync(filePath)) {
+        const data = fs.readFileSync(filePath, 'utf-8');
+        const records = JSON.parse(data);
+        return records.map((r: any) => ({
+          ...r,
+          checkedAt: new Date(r.checkedAt)
+        })).slice(0, 20);
+      }
+      return [];
+    } catch (error) {
+      console.error('Error reading key match history:', error);
+      return [];
+    }
+  }
+
+  async saveKeyMatchHistory(records: KeyMatchRecord[]): Promise<void> {
+    const filePath = this.getFilePath('key-match-history.json');
+    const limitedRecords = records.slice(0, 20);
+    fs.writeFileSync(filePath, JSON.stringify(limitedRecords, null, 2), 'utf-8');
   }
 
   setMasterPasswordHash(hash: string): void {

@@ -1,7 +1,7 @@
-import { Certificate, CheckResult, InventoryReport } from '../shared/types';
+import { Certificate, CheckResult, InventoryReport, KeyMatchRecord } from '../shared/types';
 
 export class ReportGenerator {
-  generateReport(certs: Certificate[]): InventoryReport {
+  generateReport(certs: Certificate[], keyMatchHistory: KeyMatchRecord[] = []): InventoryReport {
     const now = new Date();
     const validCerts = certs.filter(c => c.notAfter > now);
     const expiringCerts = certs.filter(c => {
@@ -17,7 +17,8 @@ export class ReportGenerator {
       expiringCertificates: expiringCerts.length,
       expiredCertificates: expiredCerts.length,
       certificates: certs,
-      checkResults: []
+      checkResults: [],
+      keyMatchHistory: keyMatchHistory
     };
   }
 
@@ -114,6 +115,32 @@ export class ReportGenerator {
   }
 
   private exportToHTML(report: InventoryReport): string {
+    const keyMatchSection = report.keyMatchHistory && report.keyMatchHistory.length > 0 ? `
+  <h2 style="margin-top: 30px; color: #1890ff;">私钥匹配历史</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>证书名称</th>
+        <th>证书序列号</th>
+        <th>私钥文件</th>
+        <th>匹配结果</th>
+        <th>检查时间</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${report.keyMatchHistory.map(record => `
+        <tr>
+          <td>${record.certificateName}</td>
+          <td><code>${record.certificateSerial}</code></td>
+          <td style="font-size: 12px; max-width: 200px; overflow: hidden; text-overflow: ellipsis;">${record.keyFilePath}</td>
+          <td style="color: ${record.isMatch ? '#52c41a' : '#ff4d4f'};">${record.isMatch ? '✅ 匹配' : '❌ 不匹配'}</td>
+          <td>${new Date(record.checkedAt).toLocaleString()}</td>
+        </tr>
+      `).join('\n')}
+    </tbody>
+  </table>
+` : '';
+
     const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -200,6 +227,7 @@ export class ReportGenerator {
       }).join('\n')}
     </tbody>
   </table>
+  ${keyMatchSection}
   <div class="footer">
     生成时间: ${report.generatedDate.toLocaleString()}
   </div>

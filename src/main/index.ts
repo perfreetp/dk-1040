@@ -5,11 +5,13 @@ import { FileManager } from './file-manager';
 import { PasswordVault } from './password-vault';
 import { DataStore } from './data-store';
 import { ReportGenerator } from './report-generator';
-import { Certificate, Project, RenewalTask, PasswordEntry, AppSettings } from '../shared/types';
+import { Certificate, Project, RenewalTask, PasswordEntry, AppSettings, KeyMatchRecord } from '../shared/types';
 import * as fs from 'fs';
 
 let mainWindow: BrowserWindow | null = null;
 let passwordVaultWindow: BrowserWindow | null = null;
+let autoLockTimer: NodeJS.Timeout | null = null;
+let autoLockMinutes: number = 5;
 
 const certificateParser = new CertificateParser();
 const fileManager = new FileManager();
@@ -47,7 +49,7 @@ function createPasswordVaultWindow(): void {
 
   passwordVaultWindow = new BrowserWindow({
     width: 500,
-    height: 450,
+    height: 500,
     parent: mainWindow || undefined,
     modal: true,
     frame: false,
@@ -64,6 +66,27 @@ function createPasswordVaultWindow(): void {
   passwordVaultWindow.on('closed', () => {
     passwordVaultWindow = null;
   });
+}
+
+function resetAutoLockTimer() {
+  if (autoLockTimer) {
+    clearTimeout(autoLockTimer);
+  }
+  if (passwordVault.isVaultUnlocked() && autoLockMinutes > 0) {
+    autoLockTimer = setTimeout(() => {
+      passwordVault.lockVault();
+      notifyVaultLocked();
+    }, autoLockMinutes * 60 * 1000);
+  }
+}
+
+function notifyVaultLocked() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('vault:locked');
+  }
+  if (passwordVaultWindow && !passwordVaultWindow.isDestroyed()) {
+    passwordVaultWindow.webContents.send('vault:locked');
+  }
 }
 
 function setupIpcHandlers(): void {
@@ -241,6 +264,41 @@ function setupIpcHandlers(): void {
     return passwordVault.isMasterPasswordSet();
   });
 
+  ipcMain.handle('passwords:lock', async () => {
+    passwordVault.lockVault();
+    if (autoLockTimer) {
+      clearTimeout(autoLockTimer);
+      autoLockTimer = null;
+    }
+    notifyVaultLocked();
+  });
+
+  ipcMain.handle('passwords:reset-lock-timer', async () => {
+    resetAutoLockTimer();
+  });
+
+  ipcMain.handle('settings:get', async () => {
+    const settings = await dataStore.getSettings();
+    autoLockMinutes = settings.autoLockMinutes || 5;
+    return settings;
+  });
+
+  ipcMain.handle('settings:save', async (_, settings: AppSettings) => {
+    await dataStore.saveSettings(settings);
+    autoLockMinutes = settings.autoLockMinutes || 5;
+    resetAutoLockTimer();
+  });
+
+  ipcMain.handle('keymatch:get-history', async () => {
+    return await dataStore.getKeyMatchHistory();
+  });
+
+  ipcMain.handle('keymatch:save-record', async (_, record: KeyMatchRecord) => {
+    const history = await dataStore.getKeyMatchHistory();
+    history.unshift(record);
+    await dataStore.saveKeyMatchHistory(history.slice(0, 20));
+  });
+
   ipcMain.handle('dialog:open-file', async (_, filters?: string) => {
     let fileFilters = [
       { name: 'Certificates', extensions: ['cer', 'crt', 'pem', 'der', 'pfx', 'p12'] },
@@ -291,17 +349,10 @@ function setupIpcHandlers(): void {
     return result.filePath || '';
   });
 
-  ipcMain.handle('settings:get', async () => {
-    return await dataStore.getSettings();
-  });
-
-  ipcMain.handle('settings:save', async (_, settings: AppSettings) => {
-    await dataStore.saveSettings(settings);
-  });
-
   ipcMain.handle('report:generate', async (_, format: 'json' | 'csv' | 'html') => {
     const certs = await dataStore.getCertificates();
-    const report = reportGenerator.generateReport(certs);
+    const keyMatchHistory = await dataStore.getKeyMatchHistory();
+    const report = reportGenerator.generateReport(certs, keyMatchHistory);
     return reportGenerator.exportReport(report, format);
   });
 

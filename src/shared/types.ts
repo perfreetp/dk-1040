@@ -41,6 +41,8 @@ export interface RenewalTask {
   notes: string;
   createdDate: Date;
   completedDate?: Date;
+  renewedCertFile?: string;
+  renewalNotes?: string;
 }
 
 export interface PasswordEntry {
@@ -64,6 +66,21 @@ export interface CheckResult {
   suggestion: string;
 }
 
+export interface KeyMatchRecord {
+  id: string;
+  certificateId: string;
+  certificateName: string;
+  certificateSerial: string;
+  keyFilePath: string;
+  isMatch: boolean;
+  checkedAt: Date;
+}
+
+export interface PasswordCategory {
+  id: string;
+  name: string;
+}
+
 export interface InventoryReport {
   generatedDate: Date;
   totalCertificates: number;
@@ -72,6 +89,7 @@ export interface InventoryReport {
   expiredCertificates: number;
   certificates: Certificate[];
   checkResults: CheckResult[];
+  keyMatchHistory: KeyMatchRecord[];
 }
 
 export interface AppSettings {

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { Certificate, Project, RenewalTask, PasswordEntry, AppSettings } from '../shared/types';
+import { Certificate, Project, RenewalTask, PasswordEntry, AppSettings, KeyMatchRecord } from '../shared/types';
 
 const electronAPI = {
   window: {
@@ -57,7 +57,17 @@ const electronAPI = {
     isSet: (): Promise<boolean> =>
       ipcRenderer.invoke('passwords:is-set'),
     isUnlocked: (): Promise<boolean> =>
-      ipcRenderer.invoke('passwords:is-unlocked')
+      ipcRenderer.invoke('passwords:is-unlocked'),
+    lock: (): Promise<void> =>
+      ipcRenderer.invoke('passwords:lock'),
+    resetLockTimer: (): Promise<void> =>
+      ipcRenderer.invoke('passwords:reset-lock-timer')
+  },
+  keymatch: {
+    getHistory: (): Promise<KeyMatchRecord[]> =>
+      ipcRenderer.invoke('keymatch:get-history'),
+    saveRecord: (record: KeyMatchRecord): Promise<void> =>
+      ipcRenderer.invoke('keymatch:save-record', record)
   },
   dialog: {
     openFile: (filters?: string): Promise<string[]> =>
@@ -88,6 +98,9 @@ const electronAPI = {
       ipcRenderer.invoke('check:key-match', certId, keyPath),
     duplicates: (): Promise<any[]> =>
       ipcRenderer.invoke('check:duplicates')
+  },
+  onVaultLocked: (callback: () => void) => {
+    ipcRenderer.on('vault:locked', callback);
   }
 };
 
